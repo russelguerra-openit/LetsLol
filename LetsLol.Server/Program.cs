@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.FileProviders;
 using LetsLol.Server.Hubs;
 
@@ -16,32 +17,43 @@ namespace LetsLol.Server
             // SignalR
             builder.Services.AddSignalR();
 
-            var clientDistPath = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "letslol.client", "dist"));
+            var repoClientDistPath = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "letslol.client", "dist"));
 
-            // CORS – allow the Vite dev server to connect
-            builder.Services.AddCors(options =>
+            if (builder.Environment.IsDevelopment())
             {
-                options.AddPolicy("ViteDev", policy =>
+                // Allow the Vite dev server to connect during local development.
+                builder.Services.AddCors(options =>
                 {
-                    policy.WithOrigins("https://localhost:57699", "http://localhost:57699")
-                          .AllowAnyHeader()
-                          .AllowAnyMethod()
-                          .AllowCredentials(); // required for SignalR
+                    options.AddPolicy("ViteDev", policy =>
+                    {
+                        policy.WithOrigins("https://localhost:57699", "http://localhost:57699")
+                              .AllowAnyHeader()
+                              .AllowAnyMethod()
+                              .AllowCredentials(); // required for SignalR
+                    });
                 });
-            });
+            }
 
             var app = builder.Build();
+            var staticAssetPath = Directory.Exists(app.Environment.WebRootPath)
+                ? app.Environment.WebRootPath
+                : repoClientDistPath;
 
-            if (Directory.Exists(clientDistPath))
+            app.UseForwardedHeaders(new ForwardedHeadersOptions
             {
-                var clientDistProvider = new PhysicalFileProvider(clientDistPath);
+                ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+            });
+
+            if (Directory.Exists(staticAssetPath))
+            {
+                var staticAssetProvider = new PhysicalFileProvider(staticAssetPath);
                 app.UseDefaultFiles(new DefaultFilesOptions
                 {
-                    FileProvider = clientDistProvider,
+                    FileProvider = staticAssetProvider,
                 });
                 app.UseStaticFiles(new StaticFileOptions
                 {
-                    FileProvider = clientDistProvider,
+                    FileProvider = staticAssetProvider,
                 });
             }
             else
@@ -57,7 +69,10 @@ namespace LetsLol.Server
 
             app.UseHttpsRedirection();
 
-            app.UseCors("ViteDev");
+            if (app.Environment.IsDevelopment())
+            {
+                app.UseCors("ViteDev");
+            }
 
             app.UseAuthorization();
 
@@ -66,12 +81,12 @@ namespace LetsLol.Server
             // SignalR hub endpoint
             app.MapHub<OfficeHub>("/hubs/office");
 
-            if (Directory.Exists(clientDistPath))
+            if (Directory.Exists(staticAssetPath))
             {
                 app.MapFallback(async context =>
                 {
                     context.Response.ContentType = "text/html; charset=utf-8";
-                    await context.Response.SendFileAsync(Path.Combine(clientDistPath, "index.html"));
+                    await context.Response.SendFileAsync(Path.Combine(staticAssetPath, "index.html"));
                 });
             }
             else

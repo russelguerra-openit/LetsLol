@@ -17,7 +17,7 @@
     </PackageReference>
   </ItemGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(SkipSpaBuild)' != 'true'">
     <ProjectReference Include="..\letslol.client\letslol.client.esproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
