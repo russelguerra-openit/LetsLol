@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="letslol.client/letslol.client.esproj">
+    <Build />
+    <Deploy />
+  </Project>
+  <Project Path="LetsLol.Server/LetsLol.Server.csproj" />
+</Solution>
