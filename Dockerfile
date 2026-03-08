@@ -2,7 +2,7 @@ FROM node:22-bookworm-slim AS client-build
 WORKDIR /src/letslol.client
 
 COPY letslol.client/package*.json ./
-RUN npm ci
+RUN npm install
 
 COPY letslol.client/ ./
 RUN npm run build
