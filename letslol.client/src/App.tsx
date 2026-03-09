@@ -6,7 +6,7 @@ import MicOffIcon from '@mui/icons-material/MicOff';
 import ScreenShareIcon from '@mui/icons-material/ScreenShare';
 import StopScreenShareIcon from '@mui/icons-material/StopScreenShare';
 import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js';
-import { startHubConnection, stopHubConnection, getHubConnection } from './signalr/hubConnection';
+import { startHubConnection, stopHubConnection, getHubConnection, subscribeToHubConnectionStatus } from './signalr/hubConnection';
 import './App.css';
 
 type AvatarPosition = { x: number; y: number };
@@ -26,7 +26,7 @@ type RemoteScreenShareStatus = 'idle' | 'starting' | 'active' | 'stopping' | 'er
 type ToastSeverity = 'info' | 'success' | 'warning' | 'error';
 type ToastMessage = { id: string; message: string; severity: ToastSeverity };
 type ScreenShareRegistrationResult = { accepted: boolean; activeSharerConnectionId: string | null; activeSessionId: string | null };
-type SignalrStatus = 'idle' | 'connecting' | 'connected' | 'error';
+type SignalrStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'error';
 type VoiceStatus = 'idle' | 'joining' | 'ready' | 'error';
 type SpeechMeter = { analyser: AnalyserNode; source: MediaStreamAudioSourceNode; data: Uint8Array<ArrayBuffer> };
 type RectArea = { x: number; y: number; width: number; height: number };
@@ -213,6 +213,7 @@ function App() {
     const pendingAvatarAppearancesRef = useRef<Map<string, AvatarAppearance>>(new Map());
     const signalrStatusRef = useRef<SignalrStatus>('idle');
     const voiceStatusRef = useRef<VoiceStatus>('idle');
+    const playerNameRef = useRef<string>(localStorage.getItem(PLAYER_NAME_STORAGE_KEY) ?? '');
     const isMutedRef = useRef<boolean>(true);
     const selectedMicDeviceIdRef = useRef<string>(localStorage.getItem(PREFERRED_MIC_DEVICE_STORAGE_KEY) ?? 'default');
     const selectedOutputDeviceIdRef = useRef<string>(localStorage.getItem(PREFERRED_OUTPUT_DEVICE_STORAGE_KEY) ?? 'default');
@@ -1202,6 +1203,10 @@ function App() {
     }, [signalrStatus]);
 
     useEffect(() => {
+        playerNameRef.current = playerName;
+    }, [playerName]);
+
+    useEffect(() => {
         voiceStatusRef.current = voiceStatus;
     }, [voiceStatus]);
 
@@ -2150,6 +2155,61 @@ function App() {
     }, [handleReceiveAnswer, handleReceiveIceCandidate, handleReceiveOffer, handleReceiveScreenShareAnswer, handleReceiveScreenShareIceCandidate, handleReceiveScreenShareOffer, handleReceiveScreenShareOfferRequest, handleReceiveScreenShareReplaced, handleReceiveScreenShareStarted, handleReceiveScreenShareStopped]);
 
     useEffect(() => {
+        const applyReconnectedProfile = async (): Promise<void> => {
+            const connection = getHubConnection();
+            const restoredName = (playerNameRef.current || localStorage.getItem(PLAYER_NAME_STORAGE_KEY) || 'Guest').trim() || 'Guest';
+            await connection.invoke('SetDisplayName', restoredName);
+            await connection.invoke('SetAvatarAppearance', JSON.stringify(avatarAppearanceRef.current));
+        };
+
+        return subscribeToHubConnectionStatus((event) => {
+            const previousConnectionId = connectionIdRef.current;
+            if (event.type === 'reconnecting') {
+                if (previousConnectionId) {
+                    removeAvatar(previousConnectionId);
+                }
+
+                setConnectionId(null);
+                setSignalrStatus('reconnecting');
+                setSignalrError(event.error?.message ?? 'Trying to reconnect to the server.');
+                closeAllPeerConnections();
+                pushToast('Connection lost. Reconnecting to the server...', 'warning', 'signalr-reconnecting');
+                return;
+            }
+
+            if (event.type === 'reconnected') {
+                setConnectionId(event.connectionId ?? getHubConnection().connectionId ?? null);
+                setSignalrStatus('connected');
+                setSignalrError(null);
+                setVoiceError(null);
+                pushToast('Reconnected to the server.', 'success', 'signalr-reconnected');
+
+                void applyReconnectedProfile().catch((error: unknown) => {
+                    const message = error instanceof Error ? error.message : 'Failed to restore your session after reconnecting.';
+                    setSignalrStatus('error');
+                    setSignalrError(message);
+                });
+                return;
+            }
+
+            if (previousConnectionId) {
+                removeAvatar(previousConnectionId);
+            }
+
+            setConnectionId(null);
+            closeAllPeerConnections();
+
+            if (signalrStatusRef.current === 'idle') {
+                return;
+            }
+
+            setSignalrStatus('disconnected');
+            setSignalrError(event.error?.message ?? 'Disconnected from the server.');
+            pushToast('Disconnected from the server.', 'error', 'signalr-disconnected');
+        });
+    }, [closeAllPeerConnections, pushToast, removeAvatar]);
+
+    useEffect(() => {
         if (voiceStatus !== 'ready') {
             void stopScreenSharing();
             closeAllPeerConnections();
@@ -2944,11 +3004,24 @@ function App() {
     const signalrStatusColors: Record<SignalrStatus, string> = {
         idle: 'text.secondary',
         connecting: 'text.secondary',
+        reconnecting: 'warning.main',
         connected: 'success.main',
+        disconnected: 'warning.main',
         error: 'error.main',
     };
 
     const signalrStatusColor = signalrStatusColors[signalrStatus];
+    const connectionBannerConfig: Partial<Record<SignalrStatus, { severity: ToastSeverity; message: string }>> = {
+        reconnecting: {
+            severity: 'warning',
+            message: 'Connection lost. Trying to reconnect to the server...',
+        },
+        disconnected: {
+            severity: 'error',
+            message: 'You are disconnected from the server.',
+        },
+    };
+    const activeConnectionBanner = connectionBannerConfig[signalrStatus];
 
     const voiceStatusColors: Record<VoiceStatus, string> = {
         idle: 'text.secondary',
@@ -3377,6 +3450,38 @@ function App() {
                 </Stack>
             )}
 
+            {activeConnectionBanner && (
+                <Alert
+                    severity={activeConnectionBanner.severity}
+                    action={signalrStatus === 'disconnected'
+                        ? (
+                            <Button
+                                color="inherit"
+                                size="small"
+                                onClick={() => { connectToSignalR().catch(() => undefined); }}
+                            >
+                                Reconnect
+                            </Button>
+                        )
+                        : undefined}
+                    sx={{
+                        position: 'absolute',
+                        top: floatingInset,
+                        left: isMobile ? 10 : 12,
+                        right: isMobile ? 62 : 64,
+                        zIndex: 7,
+                        borderRadius: 2.5,
+                        boxShadow: '0 18px 36px rgba(0, 0, 0, 0.22)',
+                        alignItems: 'center',
+                        '& .MuiAlert-message': {
+                            fontWeight: 800,
+                        },
+                    }}
+                >
+                    {activeConnectionBanner.message}
+                </Alert>
+            )}
+
             <IconButton
                 aria-label="Open settings"
                 onClick={openSettingsDialog}
@@ -3418,6 +3523,8 @@ function App() {
                                     {signalrStatus === 'idle' && 'Choose your name and connect to SignalR.'}
                                     {signalrStatus === 'connected' && connectionId && `SignalR connected - ID: ${connectionId}`}
                                     {signalrStatus === 'connecting' && 'Connecting to SignalR...'}
+                                    {signalrStatus === 'reconnecting' && 'Connection lost. Trying to reconnect to SignalR...'}
+                                    {signalrStatus === 'disconnected' && 'Disconnected from SignalR. Use reconnect to join again.'}
                                     {signalrStatus === 'error' && `SignalR failed: ${signalrError ?? 'Unknown error'}`}
                                 </Typography>
 
@@ -3428,7 +3535,7 @@ function App() {
                                     {voiceStatus === 'error' && `Voice setup failed: ${voiceError ?? 'Unknown error'}`}
                                 </Typography>
 
-                                {signalrStatus === 'error' && signalrError && (
+                                {(signalrStatus === 'error' || signalrStatus === 'disconnected') && signalrError && (
                                     <Alert severity="error">{signalrError}</Alert>
                                 )}
 

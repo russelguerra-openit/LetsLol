@@ -5,6 +5,19 @@ const SIGNALR_HUB_URL = '/hubs/office';
 let _connection: signalR.HubConnection | null = null;
 let _startPromise: Promise<void> | null = null;
 let _shouldBeConnected = false;
+type HubConnectionStatusEvent =
+    | { type: 'reconnecting'; error?: Error }
+    | { type: 'reconnected'; connectionId?: string }
+    | { type: 'close'; error?: Error };
+type HubConnectionStatusListener = (event: HubConnectionStatusEvent) => void;
+
+const _statusListeners = new Set<HubConnectionStatusListener>();
+
+function notifyStatusListeners(event: HubConnectionStatusEvent): void {
+    for (const listener of _statusListeners) {
+        listener(event);
+    }
+}
 
 export function getHubConnection(): signalR.HubConnection {
     if (!_connection) {
@@ -13,8 +26,27 @@ export function getHubConnection(): signalR.HubConnection {
             .withAutomaticReconnect()
             .configureLogging(signalR.LogLevel.Information)
             .build();
+
+        _connection.onreconnecting((error) => {
+            notifyStatusListeners({ type: 'reconnecting', error });
+        });
+
+        _connection.onreconnected((connectionId) => {
+            notifyStatusListeners({ type: 'reconnected', connectionId });
+        });
+
+        _connection.onclose((error) => {
+            notifyStatusListeners({ type: 'close', error });
+        });
     }
     return _connection;
+}
+
+export function subscribeToHubConnectionStatus(listener: HubConnectionStatusListener): () => void {
+    _statusListeners.add(listener);
+    return () => {
+        _statusListeners.delete(listener);
+    };
 }
 
 export async function startHubConnection(): Promise<void> {
