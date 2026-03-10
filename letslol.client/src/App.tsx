@@ -1220,23 +1220,39 @@ function App() {
             }
 
             const oscillator = audioContext.createOscillator();
+            const shimmerOscillator = audioContext.createOscillator();
+            const warmthOscillator = audioContext.createOscillator();
             const gainNode = audioContext.createGain();
 
-            oscillator.type = 'sine';
-            oscillator.frequency.setValueAtTime(880, audioContext.currentTime);
-            oscillator.frequency.exponentialRampToValueAtTime(660, audioContext.currentTime + 0.18);
+            oscillator.type = 'triangle';
+            shimmerOscillator.type = 'triangle';
+            warmthOscillator.type = 'sine';
+            oscillator.frequency.setValueAtTime(740, audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(620, audioContext.currentTime + 0.17);
+            shimmerOscillator.frequency.setValueAtTime(1110, audioContext.currentTime);
+            shimmerOscillator.frequency.exponentialRampToValueAtTime(820, audioContext.currentTime + 0.14);
+            warmthOscillator.frequency.setValueAtTime(370, audioContext.currentTime);
+            warmthOscillator.frequency.exponentialRampToValueAtTime(310, audioContext.currentTime + 0.18);
 
             gainNode.gain.setValueAtTime(0.0001, audioContext.currentTime);
-            gainNode.gain.exponentialRampToValueAtTime(0.08, audioContext.currentTime + 0.02);
-            gainNode.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.2);
+            gainNode.gain.exponentialRampToValueAtTime(0.18, audioContext.currentTime + 0.016);
+            gainNode.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.21);
 
             oscillator.connect(gainNode);
+            shimmerOscillator.connect(gainNode);
+            warmthOscillator.connect(gainNode);
             gainNode.connect(audioContext.destination);
             oscillator.start();
-            oscillator.stop(audioContext.currentTime + 0.21);
+            shimmerOscillator.start();
+            warmthOscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.22);
+            shimmerOscillator.stop(audioContext.currentTime + 0.16);
+            warmthOscillator.stop(audioContext.currentTime + 0.2);
 
             oscillator.onended = () => {
                 oscillator.disconnect();
+                shimmerOscillator.disconnect();
+                warmthOscillator.disconnect();
                 gainNode.disconnect();
             };
         } catch {
