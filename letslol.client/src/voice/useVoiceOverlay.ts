@@ -250,7 +250,7 @@ export function useVoiceOverlay({
         const progress = Math.max(...holdingPeers.map((peer) => peer.progress));
         overlayChips.push({
             key: 'holding',
-            label: `Holding ${Math.max(0.1, maxRemainingMs / 1000).toFixed(1)}s: ${holdingPeers.map((peer) => peer.displayName).join(', ')}`,
+            label: `Disconnecting in ${Math.max(0.1, maxRemainingMs / 1000).toFixed(1)}s if apart: ${holdingPeers.map((peer) => peer.displayName).join(', ')}`,
             tone: 'holding',
             progress,
         });

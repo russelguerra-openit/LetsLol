@@ -50,8 +50,9 @@ const PROXIMITY_DISCONNECT_THRESHOLD = 85;
 const PROXIMITY_CONNECT_DELAY_MS = 1200;
 const MAX_ACTIVE_VOICE_PEERS = 5;
 const PEER_RECONNECT_COOLDOWN_MS = 1500;
-const PROXIMITY_DISCONNECT_GRACE_MS = 4000;
+const PROXIMITY_DISCONNECT_GRACE_MS = 5000;
 const PEER_DISCONNECTED_GRACE_MS = 7000;
+const PEER_CONNECTING_TIMEOUT_MS = 5000;
 const PEER_ICE_RESTART_INTERVAL_MS = 2500;
 const SPEECH_ACTIVITY_THRESHOLD = 0.03;
 const SPEECH_HOLD_MS = 220;
@@ -147,6 +148,7 @@ function App() {
     const outOfRangeSinceRef = useRef<Map<string, number>>(new Map());
     const nearbyIndicatorSinceRef = useRef<Map<string, number>>(new Map());
     const disconnectedSinceRef = useRef<Map<string, number>>(new Map());
+    const connectingSinceRef = useRef<Map<string, number>>(new Map());
     const lastIceRestartAtRef = useRef<Map<string, number>>(new Map());
     const lastVoiceSyncAtRef = useRef<number>(0);
     const wasInProximityRef = useRef(false);
@@ -488,6 +490,7 @@ function App() {
 
     const clearPeerConnectionTimers = useCallback((peerId: string) => {
         disconnectedSinceRef.current.delete(peerId);
+        connectingSinceRef.current.delete(peerId);
         lastIceRestartAtRef.current.delete(peerId);
         outOfRangeSinceRef.current.delete(peerId);
         makingOfferPeerIdsRef.current.delete(peerId);
@@ -502,6 +505,7 @@ function App() {
             connection.onicecandidate = null;
             connection.ontrack = null;
             connection.onconnectionstatechange = null;
+            connection.oniceconnectionstatechange = null;
             connection.close();
             peerConnectionsRef.current.delete(peerId);
             setActiveCallPeerCount(peerConnectionsRef.current.size);
@@ -766,11 +770,43 @@ function App() {
         connection.onconnectionstatechange = () => {
             const state = connection.connectionState;
             if (state === 'connecting') {
+                if (!connectingSinceRef.current.has(peerId)) {
+                    connectingSinceRef.current.set(peerId, performance.now());
+                }
                 setPeerVoiceStatus(peerId, 'connecting');
                 return;
             }
 
             if (state === 'connected') {
+                connectingSinceRef.current.delete(peerId);
+                disconnectedSinceRef.current.delete(peerId);
+                setPeerVoiceStatus(peerId, 'connected');
+                return;
+            }
+
+            if (state === 'disconnected') {
+                setPeerVoiceStatus(peerId, 'recovering');
+                return;
+            }
+
+            if (state === 'failed' || state === 'closed') {
+                setPeerVoiceStatus(peerId, 'failed');
+                closePeerConnection(peerId);
+            }
+        };
+
+        connection.oniceconnectionstatechange = () => {
+            const state = connection.iceConnectionState;
+            if (state === 'checking') {
+                if (!connectingSinceRef.current.has(peerId)) {
+                    connectingSinceRef.current.set(peerId, performance.now());
+                }
+                setPeerVoiceStatus(peerId, 'connecting');
+                return;
+            }
+
+            if (state === 'connected' || state === 'completed') {
+                connectingSinceRef.current.delete(peerId);
                 disconnectedSinceRef.current.delete(peerId);
                 setPeerVoiceStatus(peerId, 'connected');
                 return;
@@ -976,6 +1012,7 @@ function App() {
             nearbySinceRef.current.clear();
             outOfRangeSinceRef.current.clear();
             disconnectedSinceRef.current.clear();
+            connectingSinceRef.current.clear();
             lastIceRestartAtRef.current.clear();
             closeAllPeerConnections();
             return;
@@ -990,6 +1027,7 @@ function App() {
         if (!localAvatar) {
             nearbySinceRef.current.clear();
             outOfRangeSinceRef.current.clear();
+            connectingSinceRef.current.clear();
             return;
         }
 
@@ -1041,8 +1079,21 @@ function App() {
                     }
                 }
             } else if (connection.connectionState === 'connected') {
+                connectingSinceRef.current.delete(peerId);
                 disconnectedSinceRef.current.delete(peerId);
                 lastIceRestartAtRef.current.delete(peerId);
+            } else if (connection.connectionState === 'connecting'
+                || connection.connectionState === 'new'
+                || connection.iceConnectionState === 'checking') {
+                const connectingSince = connectingSinceRef.current.get(peerId) ?? now;
+                connectingSinceRef.current.set(peerId, connectingSince);
+
+                if (now - connectingSince >= PEER_CONNECTING_TIMEOUT_MS) {
+                    closePeerConnection(peerId);
+                    continue;
+                }
+            } else {
+                connectingSinceRef.current.delete(peerId);
             }
         }
 
@@ -1084,6 +1135,7 @@ function App() {
         nearbySinceRef.current.clear();
         outOfRangeSinceRef.current.clear();
         disconnectedSinceRef.current.clear();
+        connectingSinceRef.current.clear();
         lastIceRestartAtRef.current.clear();
         lastPeerDisconnectAtRef.current.clear();
         makingOfferPeerIdsRef.current.clear();

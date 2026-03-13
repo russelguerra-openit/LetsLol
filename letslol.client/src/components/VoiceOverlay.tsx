@@ -39,6 +39,10 @@ export function VoiceOverlay({ chips, isMobile }: VoiceOverlayProps) {
                     <Box
                         key={chip.key}
                         sx={{
+                            alignSelf: 'center',
+                            width: 'fit-content',
+                            maxWidth: '100%',
+                            boxSizing: 'border-box',
                             px: 1.2,
                             py: chip.progress === undefined ? 0.6 : 0.7,
                             borderRadius: chip.progress === undefined ? 999 : 1.6,
@@ -53,8 +57,9 @@ export function VoiceOverlay({ chips, isMobile }: VoiceOverlayProps) {
                             <Box
                                 sx={{
                                     mt: 0.5,
-                                    width: 136,
+                                    width: isMobile ? 'min(320px, calc(100vw - 48px))' : 'min(300px, calc(100vw - 80px))',
                                     maxWidth: '100%',
+                                    mx: 'auto',
                                     height: 4,
                                     borderRadius: 999,
                                     backgroundColor: 'rgba(255, 255, 255, 0.14)',
